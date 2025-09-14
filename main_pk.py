@@ -49,6 +49,7 @@ platforms_passed = 0
 max_platforms = 0
 total_coins = 0  # Initialize to 0, will be loaded from save
 sound_enabled = True
+music_loaded = False
 coins = []
 current_trail = "none"
 current_skin = "default"
@@ -430,9 +431,10 @@ def load_music():
             pygame.mixer.music.play(-1)
     except Exception as e:
         print(f"Ошибка загрузки музыки: {e}")
+        music_loaded = False
 
 def toggle_sound():
-    global sound_enabled
+    global sound_enabled, music_loaded
     sound_enabled = not sound_enabled
     if sound_enabled:
         pygame.mixer.music.play(-1)
@@ -498,7 +500,7 @@ def reset_game_state():
     is_transitioning = False
     transition_alpha = 0
     pygame.mixer.music.stop()
-    if sound_enabled:
+    if sound_enabled and music_loaded:
         pygame.mixer.music.play(-1)
 
 def show_game_over(screen):
