@@ -57,6 +57,29 @@ purchased_skins = ["default"]
 purchased_trails = ["none"]
 trails = ["none", "red", "blue", "rainbow"]
 
+# Музыкальный плейлист
+MUSIC_TRACKS = ["Music_background.mp3", "Music_background1.mp3", "Music_background2.mp3"]
+current_music_index = 0
+MUSIC_END_EVENT = pygame.USEREVENT + 1
+
+# Улучшения (перманентные)
+double_coins = False
+
+# Локализация отображаемых названий предметов
+NAME_MAP = {
+    "default": "По умолчанию",
+    "ninja": "Ниндзя",
+    "robot": "Робот",
+    "zombie": "Зомби",
+    "none": "Нет",
+    "red": "Красный",
+    "blue": "Синий",
+    "rainbow": "Радуга"
+}
+
+def display_name(name):
+    return NAME_MAP.get(name, name)
+
 # Настройка экрана
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Pixel Hopper Pro")
@@ -254,12 +277,13 @@ class Player:
             current_bg_index = new_bg_index
 
     def add_score(self, points):
-        global current_score, high_score, total_coins
+        global current_score, high_score, total_coins, double_coins
         current_score += points
-        total_coins += points  # Update total_coins when collecting coins
+        coin_gain = points * (2 if double_coins else 1)
+        total_coins += coin_gain  # Учитываем апгрейд x2 монеты
         if current_score > high_score:
             high_score = current_score
-        save_game()  # Save game state after collecting coins
+        save_game()  # Save game state после сбора монет
 
     def update(self):
         self.old_y = self.rect.y
@@ -422,28 +446,50 @@ def load_background(index):
         bg.fill(colors)
         return bg
 
-def load_music():
-    global sound_enabled
+def start_music():
+    global music_loaded, current_music_index
     try:
-        pygame.mixer.music.load("Music_background.mp3")
+        track = MUSIC_TRACKS[current_music_index]
+        pygame.mixer.music.load(track)
         pygame.mixer.music.set_volume(0.5)
-        if sound_enabled:
-            pygame.mixer.music.play(-1)
+        pygame.mixer.music.play()
+        pygame.mixer.music.set_endevent(MUSIC_END_EVENT)
+        music_loaded = True
     except Exception as e:
         print(f"Ошибка загрузки музыки: {e}")
         music_loaded = False
+
+def play_next_track():
+    global current_music_index
+    current_music_index = (current_music_index + 1) % len(MUSIC_TRACKS)
+    if sound_enabled:
+        start_music()
+
+def load_music():
+    # Запускает плейлист, только если сейчас ничего не играет
+    try:
+        pygame.mixer.music.set_endevent(MUSIC_END_EVENT)
+    except Exception:
+        pass
+    if sound_enabled and not pygame.mixer.music.get_busy():
+        start_music()
 
 def toggle_sound():
     global sound_enabled, music_loaded
     sound_enabled = not sound_enabled
     if sound_enabled:
-        pygame.mixer.music.play(-1)
+        try:
+            pygame.mixer.music.unpause()
+            if not pygame.mixer.music.get_busy():
+                start_music()
+        except Exception:
+            start_music()
     else:
         pygame.mixer.music.pause()
     save_game()
 
 def load_game():
-    global high_score, sound_enabled, max_platforms, total_coins, current_skin, current_trail, purchased_skins, purchased_trails
+    global high_score, sound_enabled, max_platforms, total_coins, current_skin, current_trail, purchased_skins, purchased_trails, double_coins
     try:
         if SAVE_FILE.exists():
             with open(SAVE_FILE, 'r') as f:
@@ -456,6 +502,7 @@ def load_game():
                 purchased_trails = list(set(data.get("purchased_trails", [])).union({"none"}))
                 current_skin = data.get("current_skin", "default")
                 current_trail = data.get("current_trail", "none")
+                double_coins = data.get("double_coins", False)
         else:
             total_coins = 0  # Default to 0 if no save file exists
             save_game()
@@ -469,7 +516,7 @@ def load_game():
         save_game()
 
 def save_game():
-    global high_score, sound_enabled, max_platforms, total_coins, current_skin, current_trail, purchased_skins, purchased_trails
+    global high_score, sound_enabled, max_platforms, total_coins, current_skin, current_trail, purchased_skins, purchased_trails, double_coins
     try:
         data = {
             "high_score": high_score,
@@ -479,7 +526,8 @@ def save_game():
             "current_skin": current_skin,
             "current_trail": current_trail,
             "purchased_skins": purchased_skins,
-            "purchased_trails": purchased_trails
+            "purchased_trails": purchased_trails,
+            "double_coins": double_coins
         }
         with open(SAVE_FILE, 'w') as f:
             json.dump(data, f)
@@ -499,9 +547,13 @@ def reset_game_state():
     jump_count = 0
     is_transitioning = False
     transition_alpha = 0
-    pygame.mixer.music.stop()
-    if sound_enabled and music_loaded:
-        pygame.mixer.music.play(-1)
+    # Музыку не останавливаем, чтобы она играла непрерывно между экранами
+    try:
+        pygame.mixer.music.set_endevent(MUSIC_END_EVENT)
+    except Exception:
+        pass
+    if sound_enabled and not pygame.mixer.music.get_busy():
+        start_music()
 
 def show_game_over(screen):
     global high_score, max_platforms, platforms_passed, total_coins
@@ -513,20 +565,20 @@ def show_game_over(screen):
     screen.blit(overlay, (0, 0))
     font = pygame.font.SysFont("Arial", 36, bold=True)
     small_font = pygame.font.SysFont("Arial", 24, bold=True)
-    text = font.render("GAME OVER", True, (255, 50, 50))
-    platforms_text = font.render(f"Platforms: {platforms_passed}", True, WHITE)
-    record_text = font.render(f"Record: {max_platforms}", True, YELLOW)
-    coins_text = font.render(f"Total coins: {total_coins}", True, (255, 200, 100))
+    text = font.render("КОНЕЦ ИГРЫ", True, (255, 50, 50))
+    platforms_text = font.render(f"Платформы: {platforms_passed}", True, WHITE)
+    record_text = font.render(f"Рекорд: {max_platforms}", True, YELLOW)
+    coins_text = font.render(f"Всего монет: {total_coins}", True, (255, 200, 100))
     restart_button = pygame.Rect(WIDTH//2 - 150, HEIGHT//2 + 80, 120, 40)
     pygame.draw.rect(screen, (70, 200, 70), restart_button, border_radius=5)
     pygame.draw.rect(screen, (40, 40, 40), restart_button, 2, border_radius=5)
-    restart_text = small_font.render("Restart", True, BLACK)
+    restart_text = small_font.render("Заново", True, BLACK)
     screen.blit(restart_text, (restart_button.centerx - restart_text.get_width()//2,
                               restart_button.centery - restart_text.get_height()//2))
     menu_button = pygame.Rect(WIDTH//2 + 30, HEIGHT//2 + 80, 120, 40)
     pygame.draw.rect(screen, (200, 70, 70), menu_button, border_radius=5)
     pygame.draw.rect(screen, (40, 40, 40), menu_button, 2, border_radius=5)
-    menu_text = small_font.render("Main Menu", True, BLACK)
+    menu_text = small_font.render("Меню", True, BLACK)
     screen.blit(menu_text, (menu_button.centerx - menu_text.get_width()//2,
                            menu_button.centery - menu_text.get_height()//2))
     screen.blit(text, (WIDTH//2 - text.get_width()//2, HEIGHT//2 - 120))
@@ -551,6 +603,8 @@ def show_game_over(screen):
                     return "restart"
                 elif event.key == pygame.K_ESCAPE:
                     return "menu"
+            if event.type == MUSIC_END_EVENT:
+                play_next_track()
         clock.tick(FPS)
 
 def show_shop_screen(screen, shop_type):
@@ -594,7 +648,7 @@ def show_shop_screen(screen, shop_type):
                 color = (100, 100, 100)
             pygame.draw.rect(screen, color, button_rect, border_radius=10)
             pygame.draw.rect(screen, (40, 40, 40), button_rect, 2, border_radius=10)
-            item_text = item_font.render(item.capitalize(), True, WHITE)
+            item_text = item_font.render(display_name(item), True, WHITE)
             screen.blit(item_text, (button_rect.centerx - item_text.get_width() // 2,
                                    button_rect.centery - item_text.get_height() // 2))
             price = 0 if item in ["none", "default"] else (1000 if item == "rainbow" else 500)
@@ -661,8 +715,86 @@ def show_shop_screen(screen, shop_type):
                     scroll_index -= 1
                 elif event.y < 0 and scroll_index < len(items) - max_visible_items:
                     scroll_index += 1
+            if event.type == MUSIC_END_EVENT:
+                play_next_track()
         clock.tick(FPS)
     return "menu"
+
+def show_upgrades_shop(screen):
+    global total_coins, double_coins
+    try:
+        shop_bg = pygame.image.load("store_background.jpg")
+        shop_bg = pygame.transform.scale(shop_bg, (WIDTH, HEIGHT))
+    except:
+        shop_bg = pygame.Surface((WIDTH, HEIGHT))
+        shop_bg.fill((50, 50, 70))
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 100))
+    title_font = pygame.font.SysFont("Arial", 36, bold=True)
+    item_font = pygame.font.SysFont("Arial", 24, bold=True)
+    price_font = pygame.font.SysFont("Arial", 24, bold=True)
+
+    title_text = title_font.render("Магазин усилений", True, WHITE)
+
+    back_button = pygame.Rect(WIDTH // 2 - 100, HEIGHT - 80, 200, 50)
+
+    # Апгрейд: x2 монеты
+    upgrade_price = 1000
+    upgrade_rect = pygame.Rect(WIDTH // 2 - 150, 220, 300, 80)
+
+    while True:
+        screen.blit(shop_bg, (0, 0))
+        screen.blit(overlay, (0, 0))
+        screen.blit(title_text, (WIDTH // 2 - title_text.get_width() // 2, 60))
+        coins_text = title_font.render(f"Монеты: {total_coins}", True, YELLOW)
+        screen.blit(coins_text, (WIDTH // 2 - coins_text.get_width() // 2, 110))
+
+        # Кнопка апгрейда
+        if double_coins:
+            color = (204, 255, 204)  # куплено
+        elif total_coins >= upgrade_price:
+            color = (70, 70, 200)
+        else:
+            color = (100, 100, 100)
+        pygame.draw.rect(screen, color, upgrade_rect, border_radius=10)
+        pygame.draw.rect(screen, (40, 40, 40), upgrade_rect, 2, border_radius=10)
+        name_text = item_font.render("x2 монеты", True, WHITE)
+        screen.blit(name_text, (upgrade_rect.centerx - name_text.get_width() // 2,
+                                upgrade_rect.centery - name_text.get_height()))
+        if double_coins:
+            status_text = item_font.render("Куплено", True, GREEN)
+        else:
+            status_color = YELLOW if total_coins >= upgrade_price else (255, 100, 100)
+            status_text = price_font.render(f"{upgrade_price} монет", True, status_color)
+        screen.blit(status_text, (upgrade_rect.centerx - status_text.get_width() // 2,
+                                  upgrade_rect.centery))
+
+        # Кнопка Назад
+        pygame.draw.rect(screen, (200, 70, 70), back_button, border_radius=10)
+        pygame.draw.rect(screen, (40, 40, 40), back_button, 2, border_radius=10)
+        back_text = title_font.render("Назад", True, WHITE)
+        screen.blit(back_text, (back_button.centerx - back_text.get_width() // 2,
+                                back_button.centery - back_text.get_height() // 2))
+
+        pygame.display.flip()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                return "quit"
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mouse_pos = pygame.mouse.get_pos()
+                if back_button.collidepoint(mouse_pos):
+                    return "menu"
+                if upgrade_rect.collidepoint(mouse_pos) and not double_coins and total_coins >= upgrade_price:
+                    total_coins -= upgrade_price
+                    double_coins = True
+                    save_game()
+            if event.type == MUSIC_END_EVENT:
+                play_next_track()
+        clock.tick(FPS)
+
+
 def show_loading_screen():
     global sound_enabled, high_score, max_platforms, total_coins
     load_game()
@@ -683,18 +815,23 @@ def show_loading_screen():
     controls_text3 = instruction_font.render("ПРОБЕЛ - Прыжок", True, WHITE)
     stats_text1 = stats_font.render(f"Рекорд: {max_platforms}", True, (200, 200, 255))
     stats_text2 = stats_font.render(f"Монеты: {total_coins}", True, (255, 255, 100))
-    start_button = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 + 60, 200, 50)
+    start_button = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 + 10, 200, 50)
     start_color = (70, 200, 70)
     start_hover_color = (100, 255, 100)
     start_text = button_font.render("СТАРТ", True, BLACK)
-    skins_button = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 + 130, 200, 50)
+    skins_button = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 + 80, 200, 50)
     skins_color = (200, 100, 200)
     skins_hover_color = (255, 150, 255)
     skins_text = button_font.render("Скины", True, BLACK)
-    trails_button = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 + 200, 200, 50)
+    trails_button = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 + 150, 200, 50)
     trails_color = (100, 200, 200)
     trails_hover_color = (150, 255, 255)
     trails_text = button_font.render("Следы", True, BLACK)
+
+    upgrades_button = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 + 220, 200, 50)
+    upgrades_color = (200, 170, 100)
+    upgrades_hover_color = (255, 210, 150)
+    upgrades_text = button_font.render("Усиления", True, BLACK)
     sound_button_size = 40
     sound_button_rect = pygame.Rect(WIDTH - sound_button_size - 10, 10, sound_button_size, sound_button_size)
     loading = True
@@ -709,6 +846,8 @@ def show_loading_screen():
                 mouse_clicked = True
                 if sound_button_rect.collidepoint(mouse_pos):
                     toggle_sound()
+            if event.type == MUSIC_END_EVENT:
+                play_next_track()
         screen.blit(bg_image, (0, 0))
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 128))
@@ -736,6 +875,12 @@ def show_loading_screen():
         pygame.draw.rect(screen, (40, 40, 40), trails_button, 2, border_radius=10)
         screen.blit(trails_text, (trails_button.centerx - trails_text.get_width()//2,
                                 trails_button.centery - trails_text.get_height()//2))
+
+        upgrades_hovered = upgrades_button.collidepoint(mouse_pos)
+        pygame.draw.rect(screen, upgrades_hover_color if upgrades_hovered else upgrades_color, upgrades_button, border_radius=10)
+        pygame.draw.rect(screen, (40, 40, 40), upgrades_button, 2, border_radius=10)
+        screen.blit(upgrades_text, (upgrades_button.centerx - upgrades_text.get_width()//2,
+                                  upgrades_button.centery - upgrades_text.get_height()//2))
         sound_button_hovered = sound_button_rect.collidepoint(mouse_pos)
         pygame.draw.rect(screen, (100, 100, 255) if sound_button_hovered else (70, 70, 200), sound_button_rect, border_radius=10)
         if sound_enabled:
@@ -777,6 +922,12 @@ def show_loading_screen():
                 if result == "quit":
                     pygame.quit()
                     sys.exit()
+            elif upgrades_hovered:
+                result = show_upgrades_shop(screen)
+                load_game()
+                if result == "quit":
+                    pygame.quit()
+                    sys.exit()
         pygame.display.flip()
         clock.tick(60)
 
@@ -809,6 +960,8 @@ def main():
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_SPACE:
                         player.jump()
+                if event.type == MUSIC_END_EVENT:
+                    play_next_track()
             keys = pygame.key.get_pressed()
             player.velocity_x = 0
             if keys[pygame.K_LEFT] or keys[pygame.K_a]:
@@ -916,9 +1069,9 @@ def main():
             score_surface = pygame.Surface((250, 80), pygame.SRCALPHA)
             pygame.draw.rect(score_surface, (0, 0, 0, 150), (0, 0, 250, 80), border_radius=5)
             font = pygame.font.SysFont("Arial", 24, bold=True)
-            score_text = font.render(f"Platforms: {platforms_passed}", True, WHITE)
-            high_text = font.render(f"Record: {max_platforms}", True, YELLOW)
-            coins_text = font.render(f"Coins: {total_coins}", True, (255, 200, 100))
+            score_text = font.render(f"Платформы: {platforms_passed}", True, WHITE)
+            high_text = font.render(f"Рекорд: {max_platforms}", True, YELLOW)
+            coins_text = font.render(f"Монеты: {total_coins}", True, (255, 200, 100))
             screen.blit(score_surface, (10, 10))
             screen.blit(score_text, (20, 15))
             screen.blit(high_text, (20, 35))
