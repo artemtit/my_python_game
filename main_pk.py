@@ -52,6 +52,7 @@ total_coins = 0  # Initialize to 0, will be loaded from save
 sound_enabled = True
 music_loaded = False
 coins = []
+floating_texts = []
 current_trail = "none"
 current_skin = "default"
 purchased_skins = ["default"]
@@ -67,11 +68,13 @@ MUSIC_END_EVENT = pygame.USEREVENT + 1
 double_coins = False
 
 # Вертолет: параметры и состояние
-HELICOPTER_CHANCE = 0.42
+HELICOPTER_CHANCE = 0.02
 LIFT_SPEED = 2.5
 HELI_HORIZONTAL_SPEED = 4.0
 HELI_LIFETIME_PLATFORMS = 25
 BLINK_THRESHOLD_PLATFORMS = 5
+HELI_BLINK_BEFORE_VANISH_SEC = 3
+HELI_SCROLL_PX_PER_SEC = 150
 helicopters = []
 lift_active = False
 lift_remaining = 0
@@ -435,6 +438,22 @@ class Coin:
         else:
             surface.blit(self.image, (self.rect.x, self.rect.y + offset))
 
+class FloatingText:
+    def __init__(self, x, y, text, color=(255, 255, 0)):
+        self.x = x
+        self.y = y
+        self.text = text
+        self.color = color
+        self.life = 60
+    def update(self):
+        self.y -= 0.5
+        self.life -= 1
+    def draw(self, surface, font):
+        alpha = max(0, min(255, int(255 * (self.life / 60))))
+        text_surf = font.render(self.text, True, self.color)
+        text_surf.set_alpha(alpha)
+        surface.blit(text_surf, (self.x, self.y))
+
 class Helicopter:
     WIDTH = 40
     HEIGHT = 20
@@ -468,7 +487,9 @@ class Helicopter:
     def draw(self, surface):
         # Мигать, когда скоро исчезнет
         if self.blink and not self.vanishing:
-            if (pygame.time.get_ticks() // 150) % 2 == 0:
+            # Мигание в последние секунды жизни: исчезает на долю секунды
+            ticks = pygame.time.get_ticks()
+            if (ticks % 120) < 60:
                 return
         # Корпус
         body_color = (170, 190, 210) if not self.used else (140, 150, 165)
@@ -519,10 +540,12 @@ def generate_platforms(start_y, count):
         y = start_y - i * PLATFORM_GAP
         p = Platform(x, y)
         platforms.append(p)
+        heli_spawned = False
         # Спавн вертолета строго над нормальной платформой с шансом 2%
         if p.type == "normal" and random.random() < HELICOPTER_CHANCE:
             helicopters.append(Helicopter(p))
-        if random.random() < 0.4:
+            heli_spawned = True
+        if (not heli_spawned) and random.random() < 0.4:
             coin_type = "blue" if random.random() < 0.15 else "yellow"
             coins.append(Coin(x + PLATFORM_WIDTH//2 - COIN_SIZE//2, y - COIN_SIZE - 5, coin_type))
     return platforms
@@ -530,9 +553,10 @@ def generate_platforms(start_y, count):
 def load_background(index):
     try:
         bg = pygame.image.load(str(Path(__file__).parent / BACKGROUNDS[index]))
-        return pygame.transform.scale(bg, (WIDTH, HEIGHT))
-    except:
-        bg = pygame.Surface((WIDTH, HEIGHT))
+        bg = pygame.transform.scale(bg, (WIDTH, HEIGHT)).convert()
+        return bg
+    except Exception:
+        bg = pygame.Surface((WIDTH, HEIGHT)).convert()
         colors = [(30, 60, 30), (60, 30, 60), (30, 30, 60)][index]
         bg.fill(colors)
         return bg
@@ -697,6 +721,48 @@ def show_game_over(screen):
             if event.type == MUSIC_END_EVENT:
                 play_next_track()
         clock.tick(FPS)
+
+def show_pause_menu(screen):
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 180))
+    title_font = pygame.font.SysFont("Arial", 48, bold=True)
+    button_font = pygame.font.SysFont("Arial", 32, bold=True)
+
+    title = title_font.render("ПАУЗА", True, (200, 220, 255))
+    resume_button = pygame.Rect(WIDTH // 2 - 150, HEIGHT // 2 - 20, 300, 50)
+    menu_button = pygame.Rect(WIDTH // 2 - 150, HEIGHT // 2 + 60, 300, 50)
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                return "quit"
+            if event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_p, pygame.K_ESCAPE):
+                    return "resume"
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mouse_pos = pygame.mouse.get_pos()
+                if resume_button.collidepoint(mouse_pos):
+                    return "resume"
+                if menu_button.collidepoint(mouse_pos):
+                    return "menu"
+            if event.type == MUSIC_END_EVENT:
+                play_next_track()
+        screen.blit(overlay, (0, 0))
+        screen.blit(title, (WIDTH // 2 - title.get_width() // 2, HEIGHT // 2 - 120))
+        pygame.draw.rect(screen, (70, 200, 70), resume_button, border_radius=10)
+        pygame.draw.rect(screen, (40, 40, 40), resume_button, 2, border_radius=10)
+        resume_text = button_font.render("Продолжить", True, BLACK)
+        screen.blit(resume_text, (resume_button.centerx - resume_text.get_width() // 2,
+                                  resume_button.centery - resume_text.get_height() // 2))
+        pygame.draw.rect(screen, (200, 70, 70), menu_button, border_radius=10)
+        pygame.draw.rect(screen, (40, 40, 40), menu_button, 2, border_radius=10)
+        menu_text = button_font.render("Меню", True, BLACK)
+        screen.blit(menu_text, (menu_button.centerx - menu_text.get_width() // 2,
+                                menu_button.centery - menu_text.get_height() // 2))
+        pygame.display.flip()
+        clock.tick(FPS)
+
 
 def show_shop_screen(screen, shop_type):
     global current_skin, current_trail, total_coins, purchased_skins, purchased_trails
@@ -904,6 +970,7 @@ def show_loading_screen():
     controls_text1 = instruction_font.render("Управление:", True, WHITE)
     controls_text2 = instruction_font.render("← → или A D - Движение", True, WHITE)
     controls_text3 = instruction_font.render("ПРОБЕЛ - Прыжок", True, WHITE)
+    controls_text4 = instruction_font.render("ESC — Пауза", True, WHITE)
     stats_text1 = stats_font.render(f"Рекорд: {max_platforms}", True, (200, 200, 255))
     stats_text2 = stats_font.render(f"Монеты: {total_coins}", True, (255, 255, 100))
     start_button = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 + 10, 200, 50)
@@ -947,10 +1014,11 @@ def show_loading_screen():
         stats_text2 = stats_font.render(f"Монеты: {total_coins}", True, (255, 255, 100))
         screen.blit(stats_text1, (20, 20))
         screen.blit(stats_text2, (20, 45))
-        screen.blit(title_text, (WIDTH//2 - title_text.get_width()//2, HEIGHT//5))
-        screen.blit(controls_text1, (WIDTH//2 - controls_text1.get_width()//2, HEIGHT//2 - 110))
-        screen.blit(controls_text2, (WIDTH//2 - controls_text2.get_width()//2, HEIGHT//2 - 80))
-        screen.blit(controls_text3, (WIDTH//2 - controls_text3.get_width()//2, HEIGHT//2 - 50))
+        screen.blit(title_text, (WIDTH//2 - title_text.get_width()//2, HEIGHT//5 - 30))
+        screen.blit(controls_text1, (WIDTH//2 - controls_text1.get_width()//2, HEIGHT//2 - 130))
+        screen.blit(controls_text2, (WIDTH//2 - controls_text2.get_width()//2, HEIGHT//2 - 100))
+        screen.blit(controls_text3, (WIDTH//2 - controls_text3.get_width()//2, HEIGHT//2 - 70))
+        screen.blit(controls_text4, (WIDTH//2 - controls_text4.get_width()//2, HEIGHT//2 - 40))
         start_hovered = start_button.collidepoint(mouse_pos)
         pygame.draw.rect(screen, start_hover_color if start_hovered else start_color, start_button, border_radius=10)
         pygame.draw.rect(screen, (40, 40, 40), start_button, 2, border_radius=10)
@@ -1034,10 +1102,13 @@ def main():
         reset_game_state()
         current_background = load_background(0)
         player = Player()
-        platforms = generate_platforms(HEIGHT - 50, 10)
+        popup_font = pygame.font.SysFont("Arial", 20, bold=True)
         coins.clear()
         helicopters.clear()
+        floating_texts.clear()
+        platforms = generate_platforms(HEIGHT - 50, 10)
         camera_offset = 0
+        lift_scroll_accum = 0.0
         if platforms:
             player.rect.bottom = platforms[0].rect.top
             player.on_ground = True
@@ -1045,6 +1116,7 @@ def main():
         running = True
         while running:
             current_time = time.time()
+            world_scroll = 0
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit()
@@ -1052,6 +1124,14 @@ def main():
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_SPACE:
                         player.jump()
+                    elif event.key == pygame.K_p or event.key == pygame.K_ESCAPE:
+                        pause_res = show_pause_menu(screen)
+                        if pause_res == "menu":
+                            running = False
+                            break
+                        elif pause_res == "quit":
+                            pygame.quit()
+                            return
                 if event.type == MUSIC_END_EVENT:
                     play_next_track()
             keys = pygame.key.get_pressed()
@@ -1079,8 +1159,10 @@ def main():
                     reset_game_state()
                     current_background = load_background(0)
                     player = Player()
-                    platforms = generate_platforms(HEIGHT - 50, 10)
                     coins.clear()
+                    helicopters.clear()
+                    floating_texts.clear()
+                    platforms = generate_platforms(HEIGHT - 50, 10)
                     camera_offset = 0
                     if platforms:
                         player.rect.bottom = platforms[0].rect.top
@@ -1136,10 +1218,16 @@ def main():
                 coin.update()
                 if player.rect.colliderect(coin.rect):
                     player.add_score(coin.value)
+                    gain = coin.value * (2 if double_coins else 1)
+                    floating_texts.append(FloatingText(coin.rect.x, coin.rect.y, f"+{gain}", (255, 220, 80)))
                     coins.remove(coin)
             
+            # Обновление всплывающих текстов
+            for ft in floating_texts[:]:
+                ft.update()
+                if ft.life <= 0:
+                    floating_texts.remove(ft)
             # Перемещение при подъеме на вертолете: вертолет действительно летит, камера подключается позже
-            world_scroll = 0 if 'world_scroll' not in locals() else world_scroll
             if lift_active and helicopter_carry:
                 player.velocity_y = 0
                 # Пока вертолет ниже 1/3 экрана — подн��маем сам вертолет
@@ -1147,35 +1235,56 @@ def main():
                     helicopter_carry.rect.y -= LIFT_SPEED
                     player.rect.bottom = helicopter_carry.rect.top
                     lift_remaining -= LIFT_SPEED
+                    if not helicopter_carry.vanishing and lift_remaining <= HELI_BLINK_BEFORE_VANISH_SEC * HELI_SCROLL_PX_PER_SEC:
+                        helicopter_carry.blink = True
+                    # Завершение полета (вертолет ниже 1/3 экрана)
+                    if lift_remaining <= 0:
+                        try:
+                            helicopters.remove(helicopter_carry)
+                        except ValueError:
+                            pass
+                        lift_active = False
+                        helicopter_carry = None
+                        player.on_ground = False
+                        player.velocity_y = INITIAL_JUMP_VELOCITY * 1.5
                 else:
-                    # Держим вертолет на 1/3 экрана, двигаем мир вниз
-                    offset = LIFT_SPEED
-                    camera_offset += offset
-                    world_scroll += offset
+                    # Держим вертолет на 1/3 экрана, двигаем мир вниз равномерными целыми шагами
+                    lift_scroll_accum += LIFT_SPEED
+                    offset = int(lift_scroll_accum)
                     player.rect.bottom = helicopter_carry.rect.top
-                    for platform in platforms:
-                        platform.rect.y += offset
-                    for coin in coins:
-                        coin.rect.y += offset
-                    for h in helicopters:
-                        if h is not helicopter_carry:
-                            h.rect.y += offset
-                    for point in player.trail_points:
-                        point['y'] += offset
-                    lift_remaining -= offset
-                # Завершение полета
-                if lift_remaining <= 0:
-                    try:
-                        helicopters.remove(helicopter_carry)
-                    except ValueError:
-                        pass
-                    lift_active = False
-                    helicopter_carry = None
+                    if offset > 0:
+                        lift_scroll_accum -= offset
+                        camera_offset += offset
+                        world_scroll += offset
+                        for platform in platforms:
+                            platform.rect.y += offset
+                        for coin in coins:
+                            coin.rect.y += offset
+                        for h in helicopters:
+                            if h is not helicopter_carry:
+                                h.rect.y += offset
+                        for point in player.trail_points:
+                            point['y'] += offset
+                        for ft in floating_texts:
+                            ft.y += offset
+                        lift_remaining -= offset
+                    # Включить мигание за 3 секунды до исчезновения
+                    if not helicopter_carry.vanishing and lift_remaining <= HELI_BLINK_BEFORE_VANISH_SEC * HELI_SCROLL_PX_PER_SEC:
+                        helicopter_carry.blink = True
+                    # Завершение полета (когда вертолет на 1/3 экрана)
+                    if lift_remaining <= 0:
+                        try:
+                            helicopters.remove(helicopter_carry)
+                        except ValueError:
+                            pass
+                        lift_active = False
+                        helicopter_carry = None
+                        player.on_ground = False
+                        player.velocity_y = INITIAL_JUMP_VELOCITY * 1.5
             
             if not lift_active and player.rect.top < HEIGHT // 3:
                 offset = HEIGHT // 3 - player.rect.top
                 camera_offset += offset
-                world_scroll = 0 if 'world_scroll' not in locals() else world_scroll
                 world_scroll += offset
                 player.rect.y += offset
                 for platform in platforms:
@@ -1186,13 +1295,15 @@ def main():
                     h.rect.y += offset
                 for point in player.trail_points:
                     point['y'] += offset
+                for ft in floating_texts:
+                    ft.y += offset
             
             # Декремент TTL вертолетов по прокрутке мира
-            if 'world_scroll' in locals() and world_scroll > 0:
+            if world_scroll > 0:
                 for h in helicopters:
                     if (not h.used) and (not h.vanishing):
                         h.lifetime_px -= world_scroll
-                        if h.lifetime_px <= BLINK_THRESHOLD_PLATFORMS * PLATFORM_GAP:
+                        if (not h.blink) and h.lifetime_px <= HELI_BLINK_BEFORE_VANISH_SEC * HELI_SCROLL_PX_PER_SEC:
                             h.blink = True
                         if h.lifetime_px <= 0:
                             h.vanishing = True
@@ -1200,7 +1311,13 @@ def main():
                             h.vanish_dy = -3
             # Удаляем платформы и вертолеты, которые вышли за пределы экрана или завершили анимацию исчезновения
             platforms = [p for p in platforms if p.rect.top <= HEIGHT]
-            helicopters = [h for h in helicopters if (h.rect.top <= HEIGHT) and (not getattr(h, 'dead', False))]
+            # Принудительно запускаем исчезновение вертолетов у нижней кромки, если игрок их не подобрал
+            for h in helicopters:
+                if (not h.used) and (not getattr(h, 'vanishing', False)) and h.rect.bottom >= HEIGHT - 8:
+                    h.vanishing = True
+                    h.vanish_frames = 12
+                    h.vanish_dy = -3
+            helicopters = [h for h in helicopters if (h.rect.top <= HEIGHT) and (not getattr(h, 'dead', False)) and (h.used or h.rect.bottom < HEIGHT - 4)]
             
             if platforms:
                 highest_platform = min(p.rect.y for p in platforms)
@@ -1210,9 +1327,11 @@ def main():
                     new_platform = Platform(new_x, new_y)
                     new_platform.counted = False
                     platforms.append(new_platform)
+                    heli_spawned = False
                     if new_platform.type == "normal" and random.random() < HELICOPTER_CHANCE:
                         helicopters.append(Helicopter(new_platform))
-                    if random.random() < 0.4:
+                        heli_spawned = True
+                    if (not heli_spawned) and random.random() < 0.4:
                         coin_type = "blue" if random.random() < 0.15 else "yellow"
                         coins.append(Coin(new_x + PLATFORM_WIDTH//2 - COIN_SIZE//2, new_y - COIN_SIZE - 5, coin_type))
                     highest_platform = new_y
@@ -1234,6 +1353,8 @@ def main():
                 coin.draw(screen)
             for h in helicopters:
                 h.draw(screen)
+            for ft in floating_texts:
+                ft.draw(screen, popup_font)
             player.draw(screen)
             
             score_surface = pygame.Surface((250, 80), pygame.SRCALPHA)
