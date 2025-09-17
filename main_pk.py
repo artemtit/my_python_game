@@ -66,6 +66,7 @@ MUSIC_END_EVENT = pygame.USEREVENT + 1
 
 # Улучшения (перманентные)
 double_coins = False
+double_life = False
 
 # Вертолет: параметры и состояние
 HELICOPTER_CHANCE = 0.02
@@ -454,6 +455,36 @@ class FloatingText:
         text_surf.set_alpha(alpha)
         surface.blit(text_surf, (self.x, self.y))
 
+# Детализированная отрисовка крыльев
+
+def draw_single_wing(surface, cx, cy, direction=1, scale=1.0, flap=0.0, tint=(230, 230, 255), outline=(90, 90, 140)):
+    # direction: -1 левое крыло, 1 правое крыло
+    # Рисуем несколько эл��ипсов-перьев, смещая их по оси X и Y для имитации объема и взмаха
+    feathers = 5
+    for i in range(feathers):
+        t = i / (feathers - 1)
+        w = int((22 - 4 * i) * scale)
+        h = int((12 - 2 * i) * scale)
+        dx = int(direction * (8 + i * 7) * scale)
+        dy = int((-2 * i + flap * (3 + i)) * scale)
+        rect = pygame.Rect(cx + dx - w // 2, cy + dy - h // 2, w, h)
+        # светлое перо
+        col = (min(255, tint[0] + int(10 * (1 - t))), min(255, tint[1] + int(10 * (1 - t))), min(255, tint[2] + int(10 * (1 - t))))
+        pygame.draw.ellipse(surface, col, rect)
+        # контур
+        pygame.draw.ellipse(surface, outline, rect, 1)
+
+
+def draw_wings_detailed(surface, left_center, right_center, scale=1.0, phase=0.0, active=True):
+    # phase в радианах, flap амплитуда зависит от active
+    flap_amp = 1.0 if active else 0.3
+    flap = math.sin(phase) * flap_amp
+    # левое крыло
+    draw_single_wing(surface, left_center[0], left_center[1], direction=-1, scale=scale, flap=flap)
+    # правое крыло
+    draw_single_wing(surface, right_center[0], right_center[1], direction=1, scale=scale, flap=-flap)
+
+
 class Helicopter:
     WIDTH = 40
     HEIGHT = 20
@@ -604,7 +635,7 @@ def toggle_sound():
     save_game()
 
 def load_game():
-    global high_score, sound_enabled, max_platforms, total_coins, current_skin, current_trail, purchased_skins, purchased_trails, double_coins
+    global high_score, sound_enabled, max_platforms, total_coins, current_skin, current_trail, purchased_skins, purchased_trails, double_coins, double_life
     try:
         if SAVE_FILE.exists():
             with open(SAVE_FILE, 'r') as f:
@@ -618,6 +649,7 @@ def load_game():
                 current_skin = data.get("current_skin", "default")
                 current_trail = data.get("current_trail", "none")
                 double_coins = data.get("double_coins", False)
+                double_life = data.get("double_life", False)
         else:
             total_coins = 0  # Default to 0 if no save file exists
             save_game()
@@ -631,7 +663,7 @@ def load_game():
         save_game()
 
 def save_game():
-    global high_score, sound_enabled, max_platforms, total_coins, current_skin, current_trail, purchased_skins, purchased_trails, double_coins
+    global high_score, sound_enabled, max_platforms, total_coins, current_skin, current_trail, purchased_skins, purchased_trails, double_coins, double_life
     try:
         data = {
             "high_score": high_score,
@@ -642,7 +674,8 @@ def save_game():
             "current_trail": current_trail,
             "purchased_skins": purchased_skins,
             "purchased_trails": purchased_trails,
-            "double_coins": double_coins
+            "double_coins": double_coins,
+            "double_life": double_life
         }
         with open(SAVE_FILE, 'w') as f:
             json.dump(data, f)
@@ -878,7 +911,7 @@ def show_shop_screen(screen, shop_type):
     return "menu"
 
 def show_upgrades_shop(screen):
-    global total_coins, double_coins
+    global total_coins, double_coins, double_life
     try:
         shop_bg = pygame.image.load("store_background.jpg")
         shop_bg = pygame.transform.scale(shop_bg, (WIDTH, HEIGHT))
@@ -895,9 +928,12 @@ def show_upgrades_shop(screen):
 
     back_button = pygame.Rect(WIDTH // 2 - 100, HEIGHT - 80, 200, 50)
 
-    # Апгрейд: x2 монеты
-    upgrade_price = 1000
-    upgrade_rect = pygame.Rect(WIDTH // 2 - 150, 220, 300, 80)
+    # Апгрейды
+    coins_price = 1000
+    coins_rect = pygame.Rect(WIDTH // 2 - 150, 220, 300, 80)
+
+    life_price = 1500
+    life_rect = pygame.Rect(WIDTH // 2 - 150, 320, 300, 80)
 
     while True:
         screen.blit(shop_bg, (0, 0))
@@ -906,27 +942,47 @@ def show_upgrades_shop(screen):
         coins_text = title_font.render(f"Монеты: {total_coins}", True, YELLOW)
         screen.blit(coins_text, (WIDTH // 2 - coins_text.get_width() // 2, 110))
 
-        # Кнопка апгрейда
+        # x2 монеты
         if double_coins:
-            color = (200, 225, 255)  # куплено
-        elif total_coins >= upgrade_price:
+            color = (200, 225, 255)
+        elif total_coins >= coins_price:
             color = (70, 70, 200)
         else:
             color = (100, 100, 100)
-        pygame.draw.rect(screen, color, upgrade_rect, border_radius=10)
-        pygame.draw.rect(screen, (40, 40, 40), upgrade_rect, 2, border_radius=10)
+        pygame.draw.rect(screen, color, coins_rect, border_radius=10)
+        pygame.draw.rect(screen, (40, 40, 40), coins_rect, 2, border_radius=10)
         name_text = item_font.render("x2 монеты", True, WHITE)
-        screen.blit(name_text, (upgrade_rect.centerx - name_text.get_width() // 2,
-                                upgrade_rect.centery - name_text.get_height()))
+        screen.blit(name_text, (coins_rect.centerx - name_text.get_width() // 2,
+                                coins_rect.centery - name_text.get_height()))
         if double_coins:
             status_text = item_font.render("Куплено", True, (150, 200, 255))
         else:
-            status_color = YELLOW if total_coins >= upgrade_price else (255, 100, 100)
-            status_text = price_font.render(f"{upgrade_price} монет", True, status_color)
-        screen.blit(status_text, (upgrade_rect.centerx - status_text.get_width() // 2,
-                                  upgrade_rect.centery))
+            status_color = YELLOW if total_coins >= coins_price else (255, 100, 100)
+            status_text = price_font.render(f"{coins_price} монет", True, status_color)
+        screen.blit(status_text, (coins_rect.centerx - status_text.get_width() // 2,
+                                  coins_rect.centery))
 
-        # Кнопка Назад
+        # 2 жизнь
+        if double_life:
+            color = (200, 225, 255)
+        elif total_coins >= life_price:
+            color = (70, 70, 200)
+        else:
+            color = (100, 100, 100)
+        pygame.draw.rect(screen, color, life_rect, border_radius=10)
+        pygame.draw.rect(screen, (40, 40, 40), life_rect, 2, border_radius=10)
+        life_name = item_font.render("2 жизнь", True, WHITE)
+        screen.blit(life_name, (life_rect.centerx - life_name.get_width() // 2,
+                                life_rect.centery - life_name.get_height()))
+        if double_life:
+            life_status = item_font.render("Куплено", True, (150, 200, 255))
+        else:
+            life_color = YELLOW if total_coins >= life_price else (255, 100, 100)
+            life_status = price_font.render(f"{life_price} монет", True, life_color)
+        screen.blit(life_status, (life_rect.centerx - life_status.get_width() // 2,
+                                  life_rect.centery))
+
+        # Назад
         pygame.draw.rect(screen, (200, 70, 70), back_button, border_radius=10)
         pygame.draw.rect(screen, (40, 40, 40), back_button, 2, border_radius=10)
         back_text = title_font.render("Назад", True, WHITE)
@@ -943,9 +999,13 @@ def show_upgrades_shop(screen):
                 mouse_pos = pygame.mouse.get_pos()
                 if back_button.collidepoint(mouse_pos):
                     return "menu"
-                if upgrade_rect.collidepoint(mouse_pos) and not double_coins and total_coins >= upgrade_price:
-                    total_coins -= upgrade_price
+                if coins_rect.collidepoint(mouse_pos) and not double_coins and total_coins >= coins_price:
+                    total_coins -= coins_price
                     double_coins = True
+                    save_game()
+                if life_rect.collidepoint(mouse_pos) and not double_life and total_coins >= life_price:
+                    total_coins -= life_price
+                    double_life = True
                     save_game()
             if event.type == MUSIC_END_EVENT:
                 play_next_track()
@@ -1109,6 +1169,9 @@ def main():
         platforms = generate_platforms(HEIGHT - 50, 10)
         camera_offset = 0
         lift_scroll_accum = 0.0
+        extra_life_available = double_life
+        revive_active = False
+        revive_frames = 0
         if platforms:
             player.rect.bottom = platforms[0].rect.top
             player.on_ground = True
@@ -1122,7 +1185,7 @@ def main():
                     pygame.quit()
                     return
                 if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_SPACE:
+                    if event.key in (pygame.K_SPACE, pygame.K_UP, pygame.K_w):
                         player.jump()
                     elif event.key == pygame.K_p or event.key == pygame.K_ESCAPE:
                         pause_res = show_pause_menu(screen)
@@ -1154,27 +1217,39 @@ def main():
             for h in helicopters:
                 h.update()
             if player.rect.top > HEIGHT:
-                result = show_game_over(screen)
-                if result == "restart":
-                    reset_game_state()
-                    current_background = load_background(0)
-                    player = Player()
-                    coins.clear()
-                    helicopters.clear()
-                    floating_texts.clear()
-                    platforms = generate_platforms(HEIGHT - 50, 10)
-                    camera_offset = 0
-                    if platforms:
-                        player.rect.bottom = platforms[0].rect.top
-                        player.on_ground = True
-                        player.initial_jump_available = True
-                    continue
-                elif result == "menu":
-                    running = False
-                    break
+                if extra_life_available and not revive_active:
+                    # Активируем вторую жизнь: крылья поднимают игрока
+                    extra_life_available = False
+                    revive_active = True
+                    revive_frames = int(FPS * 1.5)
+                    player.rect.bottom = HEIGHT - 10
+                    player.velocity_y = INITIAL_JUMP_VELOCITY * 1.5
+                    # не показываем экран конца игры, продолжаем
                 else:
-                    pygame.quit()
-                    return
+                    result = show_game_over(screen)
+                    if result == "restart":
+                        reset_game_state()
+                        current_background = load_background(0)
+                        player = Player()
+                        coins.clear()
+                        helicopters.clear()
+                        floating_texts.clear()
+                        platforms = generate_platforms(HEIGHT - 50, 10)
+                        camera_offset = 0
+                        extra_life_available = double_life
+                        revive_active = False
+                        revive_frames = 0
+                        if platforms:
+                            player.rect.bottom = platforms[0].rect.top
+                            player.on_ground = True
+                            player.initial_jump_available = True
+                        continue
+                    elif result == "menu":
+                        running = False
+                        break
+                    else:
+                        pygame.quit()
+                        return
             player.on_ground = False
             if not lift_active:
                 for platform in platforms[:]:
@@ -1227,6 +1302,12 @@ def main():
                 ft.update()
                 if ft.life <= 0:
                     floating_texts.remove(ft)
+            # Анимация крыльев второй жизни
+            if revive_active:
+                revive_frames -= 1
+                player.rect.y -= 1.2
+                if revive_frames <= 0:
+                    revive_active = False
             # Перемещение при подъеме на вертолете: вертолет действительно летит, камера подключается позже
             if lift_active and helicopter_carry:
                 player.velocity_y = 0
@@ -1355,6 +1436,13 @@ def main():
                 h.draw(screen)
             for ft in floating_texts:
                 ft.draw(screen, popup_font)
+            # Крылья вокруг игрока при второй жизни (детализированные)
+            if revive_active:
+                ticks = pygame.time.get_ticks()
+                phase = (ticks % 1000) / 1000.0 * 2 * math.pi
+                left_center = (player.rect.left - 6, player.rect.centery)
+                right_center = (player.rect.right + 6, player.rect.centery)
+                draw_wings_detailed(screen, left_center, right_center, scale=1.0, phase=phase, active=True)
             player.draw(screen)
             
             score_surface = pygame.Surface((250, 80), pygame.SRCALPHA)
@@ -1367,6 +1455,21 @@ def main():
             screen.blit(score_text, (20, 15))
             screen.blit(high_text, (20, 35))
             screen.blit(coins_text, (20, 55))
+            # Индикатор двойной жизни (правый верхний угол) с детализированными крыльями
+            if double_life:
+                icon_rect = pygame.Rect(WIDTH - 36, 8, 26, 26)
+                bg_col = (80, 140, 200) if extra_life_available and not revive_active else (80, 80, 80)
+                pygame.draw.rect(screen, bg_col, icon_rect, border_radius=6)
+                cx = icon_rect.centerx
+                cy = icon_rect.centery
+                # мини-крылья детализированные
+                ticks = pygame.time.get_ticks()
+                phase = (ticks % 1000) / 1000.0 * 2 * math.pi
+                left_center = (cx - 6, cy)
+                right_center = (cx + 6, cy)
+                draw_wings_detailed(screen, left_center, right_center, scale=0.5, phase=phase, active=extra_life_available and not revive_active)
+                two = pygame.font.SysFont("Arial", 12, bold=True).render("2", True, BLACK)
+                screen.blit(two, (cx - two.get_width()//2, cy - two.get_height()//2))
             
             pygame.display.flip()
             clock.tick(FPS)
